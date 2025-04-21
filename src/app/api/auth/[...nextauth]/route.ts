@@ -20,7 +20,8 @@ const authOptions: NextAuthOptions = {
   pages: {
     signIn: '/login',
     error: '/login', // Error code passed in query string as ?error=
-  }
+  },
+  secret: process.env.NEXTAUTH_SECRET,
 };
 
 const handler = NextAuth(authOptions);
