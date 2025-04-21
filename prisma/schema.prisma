@@ -4,12 +4,58 @@
 // Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
+// Added standard next-auth models below
+
 generator client {
   provider = "prisma-client-js"
-  output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model Account {
+  id                 String    @id @default(cuid())
+  userId             String
+  type               String // Changed from providerType in older versions
+  provider           String // Changed from providerId in older versions
+  providerAccountId  String
+  refresh_token      String?   @db.Text // Use @db.Text for potentially long tokens
+  access_token       String?   @db.Text // Use @db.Text for potentially long tokens
+  expires_at         Int?      // Changed from accessTokenExpires in older versions
+  token_type         String?   // New field
+  scope              String?   // New field
+  id_token           String?   @db.Text // New field
+  session_state      String?   // New field
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade) // Added onDelete
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade) // Added onDelete
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+}
+
+model VerificationToken { // Renamed from VerificationRequest in older versions
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
 }
