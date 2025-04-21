@@ -1,7 +1,7 @@
-const { Server } = require("socket.io");
+import { Server, Socket } from "socket.io";
 
 // Typically, you'd use environment variables for port and CORS origins
-const PORT = process.env.PORT || 3001;
+const PORT = parseInt(process.env.PORT || "3001", 10);
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
 console.log(`Attempting to start signaling server on port ${PORT}`);
@@ -14,14 +14,14 @@ const io = new Server(PORT, {
     },
 });
 
-const rooms = {}; // Store room information (peers, offers, answers, etc.)
+const rooms: Record<string, string[]> = {}; // Store room information with better typing
 
 console.log("Socket.IO server created.");
 
-io.on("connection", (socket) => {
+io.on("connection", (socket: Socket) => {
     console.log(`User connected: ${socket.id}`);
 
-    socket.on("join-room", (roomId) => {
+    socket.on("join-room", (roomId: string) => {
         console.log(`User ${socket.id} attempting to join room ${roomId}`);
         // Simple room joining logic for now
         socket.join(roomId);
@@ -42,7 +42,12 @@ io.on("connection", (socket) => {
     });
 
     // Relay signaling messages
-    socket.on("signal", (payload) => {
+    // Define a type for the payload for better clarity
+    interface SignalPayload {
+        to: string;
+        signal: unknown; // Match the client-side type
+    }
+    socket.on("signal", (payload: SignalPayload) => {
         console.log(`Relaying signal from ${socket.id} to ${payload.to}`);
         io.to(payload.to).emit("signal", {
             from: socket.id,

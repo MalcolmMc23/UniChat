@@ -66,7 +66,7 @@ export default function VideoChat() {
       // TODO: Establish connection to the new peer
     });
 
-    newSocket.on("signal", (data: { from: string; signal: any }) => {
+    newSocket.on("signal", (data: { from: string; signal: unknown }) => {
       console.log("Received signal from:", data.from);
       // TODO: Handle incoming signal (offer/answer/candidate) from a peer
     });
