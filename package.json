@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "node server.js",
     "prebuild": "prisma generate",
     "build": "next build",
     "postinstall": "prisma generate",
-    "start": "next start",
+    "start": "NODE_ENV=production node server.js",
     "lint": "next lint",
     "signaling": "ts-node src/server/signaling.ts"
   },

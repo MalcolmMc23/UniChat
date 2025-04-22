@@ -5,8 +5,9 @@ import io, { Socket } from "socket.io-client";
 // We will need a library like simple-peer to handle WebRTC complexity
 // import Peer from 'simple-peer';
 
-const SIGNALING_SERVER_URL =
-  process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || "http://localhost:3001";
+// The signaling server is now part of our app, so we always use the current origin
+const SIGNALING_SERVER_URL: string =
+  typeof window !== "undefined" ? window.location.origin : "";
 const ROOM_ID = "general-video-chat"; // Use a fixed room ID for simplicity
 
 interface PeerData {
