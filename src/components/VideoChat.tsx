@@ -24,6 +24,8 @@ export default function VideoChat() {
   const peerConnectionsRef = useRef<Record<string, Peer.Instance>>({});
   // Store refs for peer videos
   const peerVideoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+  // Debug: keep track of connected peers
+  const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
 
   // Function to create a new peer connection
   const createPeer = (
@@ -34,32 +36,70 @@ export default function VideoChat() {
     console.log(
       `Creating peer connection with ${peerId}, initiator: ${isInitiator}`
     );
+
+    // Check if peer already exists
+    if (peerConnectionsRef.current[peerId]) {
+      console.log(`Peer ${peerId} already exists, destroying old connection`);
+      peerConnectionsRef.current[peerId].destroy();
+      setPeers((prevPeers) => prevPeers.filter((p) => p.peerId !== peerId));
+    }
+
     const peer = new Peer({
       initiator: isInitiator,
       trickle: true,
       stream: stream,
+      config: {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:global.stun.twilio.com:3478" },
+        ],
+      },
     });
 
     peer.on("signal", (signal) => {
-      console.log(`Sending signal to ${peerId}`);
+      console.log(`Sending signal to ${peerId}`, signal);
       socket?.emit("signal", {
         to: peerId,
         signal,
       });
     });
 
+    peer.on("connect", () => {
+      console.log(`Peer connection established with ${peerId}`);
+      // Update connected peers list for debugging
+      setConnectedPeers((prev) => [
+        ...prev.filter((id) => id !== peerId),
+        peerId,
+      ]);
+    });
+
     peer.on("stream", (remoteStream) => {
-      console.log(`Received stream from ${peerId}`);
+      console.log(`Received stream from ${peerId}`, remoteStream);
+
       // Update the peers state with the new stream
-      setPeers((prevPeers) =>
-        prevPeers.map((p) =>
+      setPeers((prevPeers) => {
+        const updatedPeers = prevPeers.map((p) =>
           p.peerId === peerId ? { ...p, stream: remoteStream } : p
-        )
-      );
+        );
+        console.log("Updated peers with stream:", updatedPeers);
+        return updatedPeers;
+      });
+
+      // Immediately try to set the stream to the video element if it exists
+      const videoElement = peerVideoRefs.current[peerId];
+      if (videoElement && videoElement.srcObject !== remoteStream) {
+        console.log(`Setting stream to video element for ${peerId}`);
+        videoElement.srcObject = remoteStream;
+      }
     });
 
     peer.on("error", (err) => {
       console.error(`Peer error with ${peerId}:`, err);
+    });
+
+    peer.on("close", () => {
+      console.log(`Peer connection with ${peerId} closed`);
+      setConnectedPeers((prev) => prev.filter((id) => id !== peerId));
     });
 
     // Store the peer connection
@@ -71,17 +111,21 @@ export default function VideoChat() {
   // Function to add a new peer to the peers state
   const addPeer = (peerId: string, peer: Peer.Instance) => {
     console.log(`Adding peer ${peerId} to state`);
-    setPeers((prevPeers) => [
-      ...prevPeers.filter((p) => p.peerId !== peerId),
-      { peerId, peer },
-    ]);
+    setPeers((prevPeers) => {
+      const newPeers = [
+        ...prevPeers.filter((p) => p.peerId !== peerId),
+        { peerId, peer },
+      ];
+      console.log("Updated peers state:", newPeers);
+      return newPeers;
+    });
     // Initialize the ref for this peer's video
     peerVideoRefs.current[peerId] = null;
   };
 
   // Handle incoming signals
   const handleSignal = (data: { from: string; signal: unknown }) => {
-    console.log(`Handling signal from ${data.from}`);
+    console.log(`Handling signal from ${data.from}`, data.signal);
     const { from, signal } = data;
     const peer = peerConnectionsRef.current[from];
 
@@ -89,6 +133,15 @@ export default function VideoChat() {
       peer.signal(signal as SignalData);
     } else {
       console.error(`No peer found for ${from}`);
+
+      // If we have a stream but no peer, create one
+      if (myStream) {
+        console.log(`Creating new peer for ${from} after receiving signal`);
+        const newPeer = createPeer(from, false, myStream);
+        addPeer(from, newPeer);
+        // Signal the peer with the data we just received
+        newPeer.signal(signal as SignalData);
+      }
     }
   };
 
@@ -104,7 +157,7 @@ export default function VideoChat() {
       navigator.mediaDevices
         .getUserMedia({ video: true, audio: true })
         .then((stream) => {
-          console.log("Got user media stream");
+          console.log("Got user media stream", stream);
           setMyStream(stream);
           if (myVideoRef.current) {
             myVideoRef.current.srcObject = stream;
@@ -129,10 +182,16 @@ export default function VideoChat() {
       console.log("Received existing peers:", peerIds);
 
       // We need myStream to create peers
-      if (!myStream) return;
+      if (!myStream) {
+        console.error(
+          "No local stream available for connecting to existing peers"
+        );
+        return;
+      }
 
       // Create connections to all existing peers
       peerIds.forEach((peerId) => {
+        console.log(`Creating connection to existing peer ${peerId}`);
         const peer = createPeer(peerId, true, myStream);
         addPeer(peerId, peer);
       });
@@ -142,7 +201,10 @@ export default function VideoChat() {
       console.log("Peer connected:", peerId);
 
       // We need myStream to create peers
-      if (!myStream) return;
+      if (!myStream) {
+        console.error("No local stream available for connecting to new peer");
+        return;
+      }
 
       // Create connection to the new peer (we are not the initiator)
       const peer = createPeer(peerId, false, myStream);
@@ -150,7 +212,7 @@ export default function VideoChat() {
     });
 
     newSocket.on("signal", (data: { from: string; signal: unknown }) => {
-      console.log("Received signal from:", data.from);
+      console.log("Received signal from:", data.from, data.signal);
       handleSignal(data);
     });
 
@@ -166,7 +228,14 @@ export default function VideoChat() {
       }
 
       // Remove peer from state
-      setPeers((prevPeers) => prevPeers.filter((p) => p.peerId !== peerId));
+      setPeers((prevPeers) => {
+        const newPeers = prevPeers.filter((p) => p.peerId !== peerId);
+        console.log("Peers after disconnect:", newPeers);
+        return newPeers;
+      });
+
+      // Update connected peers list
+      setConnectedPeers((prev) => prev.filter((id) => id !== peerId));
     });
 
     // Cleanup on component unmount
@@ -177,23 +246,36 @@ export default function VideoChat() {
         peer.destroy()
       );
       newSocket.disconnect();
+      setConnectedPeers([]);
     };
   }, []); // Run only once on mount
 
   // Set up ref callback for peer videos
   const setPeerVideoRef =
     (peerId: string) => (element: HTMLVideoElement | null) => {
+      console.log(`Setting video ref for peer ${peerId}`, element);
       peerVideoRefs.current[peerId] = element;
 
       // If we have the element and stream, set it
       const peerData = peers.find((p) => p.peerId === peerId);
       if (element && peerData?.stream) {
+        console.log(
+          `Found stream for peer ${peerId}, setting to video element`
+        );
         element.srcObject = peerData.stream;
+
+        // Make sure video plays
+        element
+          .play()
+          .catch((e) => console.error(`Error playing video for ${peerId}:`, e));
+      } else {
+        console.log(`No stream yet for peer ${peerId}`);
       }
     };
 
   // Update video elements when peer streams change
   useEffect(() => {
+    console.log("Peers state updated:", peers);
     peers.forEach((peer) => {
       const videoElement = peerVideoRefs.current[peer.peerId];
       if (
@@ -201,7 +283,17 @@ export default function VideoChat() {
         peer.stream &&
         videoElement.srcObject !== peer.stream
       ) {
+        console.log(
+          `Updating video element for peer ${peer.peerId} with stream`
+        );
         videoElement.srcObject = peer.stream;
+
+        // Make sure video plays
+        videoElement
+          .play()
+          .catch((e) =>
+            console.error(`Error playing video for ${peer.peerId}:`, e)
+          );
       }
     });
   }, [peers]);
@@ -230,6 +322,9 @@ export default function VideoChat() {
           <div className="border p-2 rounded shadow">
             <h3 className="text-sm font-medium mb-1">
               Peer ({peers[0].peerId.substring(0, 5)}...)
+              {peers[0].stream
+                ? " (Stream connected)"
+                : " (Waiting for stream...)"}
             </h3>
             <video
               ref={setPeerVideoRef(peers[0].peerId)}
@@ -248,8 +343,17 @@ export default function VideoChat() {
         )}
       </div>
 
+      {/* Debug info */}
+      <div className="mt-4 text-xs text-gray-500">
+        <p>
+          Connected peers:{" "}
+          {connectedPeers.length > 0 ? connectedPeers.join(", ") : "None"}
+        </p>
+        <p>Peers with streams: {peers.filter((p) => p.stream).length}</p>
+      </div>
+
       {/* Room status */}
-      <div className="mt-4 text-sm text-gray-600">
+      <div className="mt-2 text-sm text-gray-600">
         <p>
           {peers.length === 0
             ? "You're alone in this room."
